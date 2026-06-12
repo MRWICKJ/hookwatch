@@ -66,6 +66,7 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number>(0);
 
+  const updateRequestsRef = useRef<(incoming: CapturedRequest) => void>(() => {});
   const updateRequests = useCallback((incoming: CapturedRequest) => {
     if (paused) return;
     setRequests(prev => {
@@ -74,20 +75,25 @@ export default function App() {
     });
     setSelected(current => current || incoming);
   }, [paused]);
+  updateRequestsRef.current = updateRequests;
 
   useEffect(() => {
-    let ws: WebSocket;
+    let cancelled = false;
+    let ws: WebSocket | null = null;
 
     function connect() {
+      if (cancelled) return;
       ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (cancelled) { ws?.close(); return; }
         setConnected(true);
         reconnectRef.current = 0;
       };
 
       ws.onclose = () => {
+        if (cancelled) return;
         setConnected(false);
         const delay = Math.min(1000 * Math.pow(2, reconnectRef.current), 30000);
         reconnectRef.current++;
@@ -95,9 +101,10 @@ export default function App() {
       };
 
       ws.onmessage = (event) => {
+        if (cancelled) return;
         try {
           const incoming: CapturedRequest = JSON.parse(event.data);
-          updateRequests(incoming);
+          updateRequestsRef.current(incoming);
         } catch { /* ignore parse errors */ }
       };
     }
@@ -105,14 +112,18 @@ export default function App() {
     fetch(`${API_BASE}/requests`)
       .then(res => res.json())
       .then((data: CapturedRequest[]) => {
+        if (cancelled) return;
         setRequests(data.reverse());
         if (data.length > 0) setSelected(data[data.length - 1]);
       })
       .catch(() => {});
 
     connect();
-    return () => ws.close();
-  }, [updateRequests]);
+    return () => {
+      cancelled = true;
+      ws?.close();
+    };
+  }, []);
 
   const clearRequests = useCallback(async () => {
     await fetch(`${API_BASE}/clear`, { method: "POST" });
