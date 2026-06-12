@@ -1,16 +1,15 @@
-package main
+package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -39,7 +38,6 @@ type Config struct {
 	ResponseCode  int
 	ResponseBody  string
 	CORSOrigins   string
-	StaticDir     string
 }
 
 type History struct {
@@ -90,19 +88,22 @@ func NewHub() *Hub {
 }
 
 var (
-	hub     *Hub
-	history *History
-	config  Config
+	hub       *Hub
+	history   *History
+	cfg       Config
+	startTime time.Time
+	Version   = "dev"
+	Commit    = "none"
+	Date      = "unknown"
 )
 
 func init() {
-	flag.StringVar(&config.Host, "host", "0.0.0.0", "host to listen on")
-	flag.IntVar(&config.Port, "port", 8877, "port to listen on")
-	flag.IntVar(&config.MaxRequests, "max-requests", 500, "max requests to keep in memory")
-	flag.IntVar(&config.ResponseCode, "response-code", 200, "HTTP status code to return to webhook sender")
-	flag.StringVar(&config.ResponseBody, "response-body", `{"status":"captured"}`, "JSON body to return to webhook sender")
-	flag.StringVar(&config.CORSOrigins, "cors-origins", "*", "allowed CORS origins (comma-separated or *)")
-	flag.StringVar(&config.StaticDir, "static-dir", "", "serve static frontend files from this directory")
+	flag.StringVar(&cfg.Host, "host", "0.0.0.0", "host to listen on")
+	flag.IntVar(&cfg.Port, "port", 8877, "port to listen on")
+	flag.IntVar(&cfg.MaxRequests, "max-requests", 500, "max requests to keep in memory")
+	flag.IntVar(&cfg.ResponseCode, "response-code", 200, "HTTP status code returned to sender")
+	flag.StringVar(&cfg.ResponseBody, "response-body", `{"status":"captured"}`, "JSON body returned to sender")
+	flag.StringVar(&cfg.CORSOrigins, "cors-origins", "*", "allowed CORS origins (comma-separated or *)")
 }
 
 func (h *Hub) Run() {
@@ -112,7 +113,6 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
-			log.Println("[ws] client connected")
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
@@ -120,12 +120,10 @@ func (h *Hub) Run() {
 				client.Close()
 			}
 			h.mu.Unlock()
-			log.Println("[ws] client disconnected")
 		case req := <-h.broadcast:
 			h.mu.Lock()
 			for client := range h.clients {
 				if err := client.WriteJSON(req); err != nil {
-					log.Printf("[ws] write error: %v", err)
 					client.Close()
 					delete(h.clients, client)
 				}
@@ -138,11 +136,11 @@ func (h *Hub) Run() {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if config.CORSOrigins == "*" {
+		if cfg.CORSOrigins == "*" {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		} else {
-			for _, allowed := range splitOrigins(config.CORSOrigins) {
-				if allowed == origin {
+			for _, allowed := range strings.Split(cfg.CORSOrigins, ",") {
+				if strings.TrimSpace(allowed) == origin {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
 					break
 				}
@@ -150,37 +148,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
-}
-
-func splitOrigins(s string) []string {
-	if s == "" {
-		return nil
-	}
-	var origins []string
-	var buf []byte
-	for i := 0; i < len(s); i++ {
-		if s[i] == ',' {
-			if len(buf) > 0 {
-				origins = append(origins, string(buf))
-				buf = nil
-			}
-		} else {
-			buf = append(buf, s[i])
-		}
-	}
-	if len(buf) > 0 {
-		origins = append(origins, string(buf))
-	}
-	return origins
 }
 
 var upgrader = websocket.Upgrader{
@@ -190,12 +164,10 @@ var upgrader = websocket.Upgrader{
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[ws] upgrade failed: %v", err)
 		return
 	}
 	hub.register <- conn
 	defer func() { hub.unregister <- conn }()
-
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
 			break
@@ -205,13 +177,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	hub.mu.Lock()
+	clientCount := len(hub.clients)
+	hub.mu.Unlock()
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":    "ok",
-		"uptime":    time.Since(startTime).String(),
-		"requests":  len(history.All()),
-		"clients":   func() int { hub.mu.Lock(); defer hub.mu.Unlock(); return len(hub.clients) }(),
-		"max":       config.MaxRequests,
+		"status":   "ok",
+		"version":  Version,
+		"uptime":   time.Since(startTime).String(),
+		"requests": len(history.All()),
+		"clients":  clientCount,
 	})
 }
 
@@ -226,54 +200,13 @@ func handleClearRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	history.mu.Lock()
-	history.requests = make([]CapturedRequest, 0, config.MaxRequests)
+	history.requests = make([]CapturedRequest, 0, cfg.MaxRequests)
 	history.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"cleared"}`))
 }
 
-var (
-	startTime time.Time
-	version   = "dev"
-	commit    = "none"
-	date      = "unknown"
-)
-
-func catchAllRequests(w http.ResponseWriter, r *http.Request) {
-	// Serve static frontend if configured
-	if config.StaticDir != "" && strings.HasPrefix(r.URL.Path, "/api") == false && r.URL.Path != "/ws" {
-		filePath := filepath.Join(config.StaticDir, r.URL.Path)
-		if r.URL.Path == "/" || r.URL.Path == "" {
-			filePath = filepath.Join(config.StaticDir, "index.html")
-		}
-		if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
-			http.ServeFile(w, r, filePath)
-			return
-		}
-		// SPA fallback
-		indexPath := filepath.Join(config.StaticDir, "index.html")
-		if _, err := os.Stat(indexPath); err == nil {
-			http.ServeFile(w, r, indexPath)
-			return
-		}
-	}
-
-	switch {
-	case r.URL.Path == "/ws":
-		handleWebSocket(w, r)
-		return
-	case r.URL.Path == "/health" || r.URL.Path == "/api/health":
-		handleHealth(w, r)
-		return
-	case r.URL.Path == "/api/requests":
-		handleGetRequests(w, r)
-		return
-	case r.URL.Path == "/api/clear":
-		handleClearRequests(w, r)
-		return
-	}
-
+func captureRequest(w http.ResponseWriter, r *http.Request) {
 	var bodyBytes []byte
 	if r.Body != nil {
 		var err error
@@ -283,7 +216,6 @@ func catchAllRequests(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 	var parsedBody interface{}
 	if err := json.Unmarshal(bodyBytes, &parsedBody); err != nil {
@@ -305,44 +237,47 @@ func catchAllRequests(w http.ResponseWriter, r *http.Request) {
 	history.Add(captured)
 	hub.broadcast <- captured
 
-	log.Printf("[req] %s %s from %s (%d bytes)", r.Method, r.URL.Path, r.RemoteAddr, len(bodyBytes))
-
-	w.WriteHeader(config.ResponseCode)
+	log.Printf("[req] %s %s (%d bytes)", r.Method, r.URL.Path, len(bodyBytes))
+	w.WriteHeader(cfg.ResponseCode)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(config.ResponseBody))
+	w.Write([]byte(cfg.ResponseBody))
 }
 
-func main() {
+func Start(staticFS fs.FS) {
 	flag.Parse()
 	startTime = time.Now()
 
 	hub = NewHub()
-	history = NewHistory(config.MaxRequests)
-
+	history = NewHistory(cfg.MaxRequests)
 	go hub.Run()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", catchAllRequests)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && staticFS != nil {
+			p := strings.TrimPrefix(r.URL.Path, "/")
+			if p == "" {
+				p = "index.html"
+			}
+			if _, err := fs.Stat(staticFS, p); err == nil {
+				fileServer := http.FileServer(http.FS(staticFS))
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		captureRequest(w, r)
+	})
 
-	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 
-	log.SetFlags(log.Ltime | log.Lmsgprefix)
-	log.SetPrefix("[hookwatch] ")
-
-	fmt.Println(`
-  _   _           _      _       _     
+	fmt.Println(`  _   _           _      _       _     
  | | | | ___   __| | ___| |_   / \   
  | |_| |/ _ \ / _  |/ _ \ __| / _ \  
  |  _  | (_) | (_| |  __/ |_ / ___ \ 
  |_| |_|\___/ \__,_|\___|\__/_/   \_\
-                                     
 `)
-
-	fmt.Printf("  HookWatch v%s     http://%s\n", version, addr)
-	fmt.Printf("  WebSocket          ws://%s/ws\n", addr)
-	fmt.Printf("  Health             http://%s/health\n", addr)
-	fmt.Printf("  Max Requests:      %d\n", config.MaxRequests)
-	fmt.Printf("  Build:             %s (%s)\n", commit, date)
+	fmt.Printf("  HookWatch v%-6s   http://%s\n", Version, addr)
+	fmt.Printf("  Dashboard        http://%s\n", addr)
+	fmt.Printf("  Send webhooks    http://%s/your-path\n", addr)
 	fmt.Println()
 
 	server := &http.Server{
@@ -354,12 +289,12 @@ func main() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
-		fmt.Println("\n  Shutting down gracefully...")
+		fmt.Println("\n  shutting down...")
 		server.Close()
 	}()
 
-	log.Printf("server started on %s", addr)
+	log.Printf("started on %s", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
+		log.Fatalf("error: %v", err)
 	}
 }

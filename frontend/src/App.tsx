@@ -196,7 +196,7 @@ export default function App() {
               <div className="flex flex-col items-center justify-center h-full text-center p-8 text-zinc-600">
                 <div className="w-8 h-8 rounded-full border border-dashed border-zinc-700 animate-spin mb-4" />
                 <p className="text-sm text-zinc-500">Waiting for requests...</p>
-                <p className="text-xs mt-1 font-mono">Send traffic to <span className="text-zinc-400">localhost:8080</span></p>
+                <p className="text-xs mt-1 font-mono">Send traffic to <span className="text-zinc-400">localhost:8877</span></p>
               </div>
             ) : (
               filtered.map((req) => (
@@ -342,7 +342,7 @@ export default function App() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
               <p className="text-sm font-mono">Select a request to inspect</p>
-              <p className="text-xs mt-1 text-zinc-700">Or send one with <code className="text-zinc-500">curl -X POST localhost:8080</code></p>
+              <p className="text-xs mt-1 text-zinc-700">Or send one with <code className="text-zinc-500">curl -X POST localhost:8877</code></p>
             </div>
           )}
         </main>

@@ -20,16 +20,14 @@ jobs:
         with:
           node-version: 20
 
-      - name: Build Go server
-        run: |
-          cd server
-          go build -v ./...
-
       - name: Build frontend
         run: |
           cd frontend
           npm ci
           npm run build
+
+      - name: Build Go binary
+        run: go build -v ./...
 
       - name: TypeScript check
         run: |

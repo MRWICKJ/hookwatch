@@ -3,4 +3,3 @@ services:
     build: .
     ports:
       - "8877:8877"
-    command: ["./hookwatch", "--port", "8877", "--max-requests", "1000", "--static-dir", "./frontend-dist"]

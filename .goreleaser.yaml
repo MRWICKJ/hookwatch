@@ -7,17 +7,15 @@ env:
 
 before:
   hooks:
-    - sh -c "cd server && go mod tidy"
     - sh -c "cd frontend && npm ci"
     - sh -c "cd frontend && npm run build"
 
 builds:
   - id: hookwatch
-    dir: server
     main: .
     binary: hookwatch
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X hookwatch/server.Version={{.Version}} -X hookwatch/server.Commit={{.Commit}} -X hookwatch/server.Date={{.Date}}
     env:
       - CGO_ENABLED=0
     goos:
@@ -41,9 +39,6 @@ archives:
         formats:
           - zip
     files:
-      - src: frontend/dist/*
-        dst: frontend-dist
-        strip_parent: true
       - README.md
       - LICENSE
 
@@ -66,10 +61,10 @@ release:
   header: |
     ## HookWatch {{ .Version }}
 
-    Download the latest archive for your platform, extract, and run:
+    Download and run:
 
     ```bash
-    ./hookwatch --port 8877 --static-dir ./frontend-dist
+    ./hookwatch
     ```
 
     Then open http://localhost:8877 in your browser.
