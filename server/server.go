@@ -98,7 +98,7 @@ var (
 )
 
 func init() {
-	flag.StringVar(&cfg.Host, "host", "0.0.0.0", "host to listen on")
+	flag.StringVar(&cfg.Host, "host", "localhost", "host to listen on")
 	flag.IntVar(&cfg.Port, "port", 8877, "port to listen on")
 	flag.IntVar(&cfg.MaxRequests, "max-requests", 500, "max requests to keep in memory")
 	flag.IntVar(&cfg.ResponseCode, "response-code", 200, "HTTP status code returned to sender")
@@ -189,7 +189,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleGetRequests(w http.ResponseWriter, r *http.Request) {
+func handleGetRequests(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(history.All())
 }
