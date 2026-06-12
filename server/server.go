@@ -253,14 +253,33 @@ func Start(staticFS fs.FS) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if p == "/ws" {
+			handleWebSocket(w, r)
+			return
+		}
+		if p == "/health" {
+			handleHealth(w, r)
+			return
+		}
+		if strings.HasPrefix(p, "/api/") {
+			switch p {
+			case "/api/requests":
+				handleGetRequests(w, r)
+			case "/api/clear":
+				handleClearRequests(w, r)
+			default:
+				http.NotFound(w, r)
+			}
+			return
+		}
 		if r.Method == "GET" && staticFS != nil {
-			p := strings.TrimPrefix(r.URL.Path, "/")
+			p = strings.TrimPrefix(p, "/")
 			if p == "" {
 				p = "index.html"
 			}
 			if _, err := fs.Stat(staticFS, p); err == nil {
-				fileServer := http.FileServer(http.FS(staticFS))
-				fileServer.ServeHTTP(w, r)
+				http.FileServer(http.FS(staticFS)).ServeHTTP(w, r)
 				return
 			}
 		}
@@ -269,7 +288,7 @@ func Start(staticFS fs.FS) {
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 
-	fmt.Println(`  _   _           _      _       _     
+	fmt.Print(`  _   _           _      _       _     
  | | | | ___   __| | ___| |_   / \   
  | |_| |/ _ \ / _  |/ _ \ __| / _ \  
  |  _  | (_) | (_| |  __/ |_ / ___ \ 
