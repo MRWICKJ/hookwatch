@@ -1,3 +1,5 @@
+version: 2
+
 project_name: hookwatch
 
 env:
@@ -6,6 +8,7 @@ env:
 before:
   hooks:
     - go mod tidy
+    - cd frontend && npm ci && npm run build
 
 builds:
   - id: hookwatch
@@ -44,9 +47,6 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-snapshot:
-  name_template: "{{ .Tag }}-next"
-
 changelog:
   sort: asc
   filters:
@@ -57,29 +57,19 @@ changelog:
       - "^chore:"
 
 release:
-  github:
-    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
-    name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
   draft: true
   prerelease: auto
   mode: append
   header: |
     ## HookWatch {{ .Version }}
 
-    Download the latest release for your platform below.
-
-    ### Quick start
+    Download the latest archive for your platform, extract, and run:
 
     ```bash
-    # Extract the archive
-    tar xzf hookwatch_*.tar.gz
-    cd hookwatch_*
-
-    # Start the server
     ./hookwatch --port 8877 --static-dir ./frontend-dist
-
-    # Open http://localhost:8877
     ```
+
+    Then open http://localhost:8877 in your browser.
 
     ### Test it
 
