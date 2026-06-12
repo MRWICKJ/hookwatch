@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+.DS_Store
+Thumbs.db
+*.log
+.env
+.vscode/
+.idea/
+*.local
+frontend/dist/
+frontend/src/App.tsx.bak

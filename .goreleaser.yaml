@@ -1,0 +1,88 @@
+project_name: hookwatch
+
+env:
+  - GO111MODULE=on
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: hookwatch
+    dir: server
+    main: .
+    binary: hookwatch
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: hookwatch
+    builds: [hookwatch]
+    name_template: "{{.ProjectName}}_{{.Version}}_{{.Os}}_{{.Arch}}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - src: frontend/dist/*
+        dst: frontend-dist
+        strip_parent: true
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  github:
+    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
+    name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
+  draft: true
+  prerelease: auto
+  mode: append
+  header: |
+    ## HookWatch {{ .Version }}
+
+    Download the latest release for your platform below.
+
+    ### Quick start
+
+    ```bash
+    # Extract the archive
+    tar xzf hookwatch_*.tar.gz
+    cd hookwatch_*
+
+    # Start the server
+    ./hookwatch --port 8877 --static-dir ./frontend-dist
+
+    # Open http://localhost:8877
+    ```
+
+    ### Test it
+
+    ```bash
+    curl -X POST http://localhost:8877/test -d '{"hello":"world"}'
+    ```
