@@ -7,12 +7,9 @@ env:
 
 before:
   hooks:
-    - dir: server
-      cmd: go mod tidy
-    - dir: frontend
-      cmd: npm ci
-    - dir: frontend
-      cmd: npm run build
+    - cd server && go mod tidy
+    - cd frontend && npm ci
+    - cd frontend && npm run build
 
 builds:
   - id: hookwatch
